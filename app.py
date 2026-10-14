@@ -11,7 +11,8 @@ from google import genai
 from google.genai import types
 from pypdf import PdfReader
 
-MODEL_NAME = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
+MODEL_NAME = os.getenv("GEMINI_MODEL", DEFAULT_MODEL)  # override via env var or Streamlit secret
 MAX_CHARS = 20000  # keep the prompt a sensible size
 MIN_CHARS = 100  # below this, the file is probably a scanned image
 
@@ -130,7 +131,7 @@ def analyze_resume(api_key: str, resume_text: str, job_description: str = "") ->
     """Send the resume to Gemini and return the parsed analysis."""
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
-        model=MODEL_NAME,
+        model=get_model_name(),
         contents=build_prompt(resume_text, job_description),
         config=types.GenerateContentConfig(
             temperature=0.2,
@@ -138,6 +139,16 @@ def analyze_resume(api_key: str, resume_text: str, job_description: str = "") ->
         ),
     )
     return parse_response(response.text)
+
+
+def get_model_name() -> str:
+    """Model from Streamlit secrets (GEMINI_MODEL), else env var, else the default."""
+    try:
+        if "GEMINI_MODEL" in st.secrets:
+            return st.secrets["GEMINI_MODEL"]
+    except Exception:
+        pass
+    return MODEL_NAME
 
 
 def get_api_key() -> str:
