@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import time
 
 import streamlit as st
 from docx import Document
@@ -15,6 +16,8 @@ DEFAULT_MODEL = "gemini-3.8-flash"
 MODEL_NAME = os.getenv("GEMINI_MODEL", DEFAULT_MODEL)  # override via env var or Streamlit secret
 MAX_CHARS = 20000  # keep the prompt a sensible size
 MIN_CHARS = 100  # below this, the file is probably a scanned image
+RETRY_CODES = {429, 500, 502, 503, 504}  # temporary errors worth retrying
+RETRY_DELAYS = (2, 5, 10)  # seconds to wait before each retry
 
 
 # ----------------------------------------------------------------------------
@@ -128,17 +131,31 @@ def parse_response(raw: str) -> dict:
 
 
 def analyze_resume(api_key: str, resume_text: str, job_description: str = "") -> dict:
-    """Send the resume to Gemini and return the parsed analysis."""
+    """Send the resume to Gemini (retrying on temporary overload) and parse the result."""
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=get_model_name(),
-        contents=build_prompt(resume_text, job_description),
-        config=types.GenerateContentConfig(
-            temperature=0.2,
-            response_mime_type="application/json",
-        ),
+    config = types.GenerateContentConfig(
+        temperature=0.2,
+        response_mime_type="application/json",
     )
-    return parse_response(response.text)
+    prompt = build_prompt(resume_text, job_description)
+
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        try:
+            response = client.models.generate_content(
+                model=get_model_name(), contents=prompt, config=config
+            )
+            return parse_response(response.text)
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            if code in RETRY_CODES and attempt < len(RETRY_DELAYS):
+                time.sleep(RETRY_DELAYS[attempt])
+                continue
+            if code in RETRY_CODES:
+                raise RuntimeError(
+                    "Google's Gemini servers are busy right now. "
+                    "Please wait a minute and click Analyze again."
+                ) from exc
+            raise
 
 
 def get_model_name() -> str:
